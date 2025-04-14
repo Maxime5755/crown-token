@@ -168,180 +168,46 @@ async function initContracts() {
     }
 }
 
-// Get Crown information avec gestion d'erreur améliorée
-async function getCrownInfo() {
+// Initialize data
+async function initData() {
     try {
-        return await fetchWithRetry(async () => {
-            console.log("👑 Récupération des infos du CROWN...");
+        console.log("🚀 Initialisation des données $CROWN...");
+        
+        // Initialiser les connexions au contrat
+        const contractsInitialized = await initContracts();
+        if (!contractsInitialized) {
+            throw new Error("Échec de l'initialisation des contrats");
+        }
+        
+        // Get data sequentially to avoid errors
+        console.log("👑 Récupération des infos du CROWN...");
+        try {
             const crown = await contract.Crown();
-            const biggestBuy = await contract.biggestBuy();
-            const resetPeriod = await contract.resetPeriod();
-            const lastCrownChange = await contract.lastCrownChange();
-
-            const now = Math.floor(Date.now() / 1000);
-            const resetTime = lastCrownChange.toNumber() + resetPeriod.toNumber();
-            const remaining = resetTime > now ? resetTime - now : 0;
-
-            // Mettre à jour l'adresse avec le format plus court
+            console.log("Crown address:", crown);
             document.getElementById('crown-address').textContent = crown;
-
-            updateValue('crown-buy-amount', parseFloat(ethers.utils.formatEther(biggestBuy)));
-            document.getElementById('crown-time-remaining').textContent = formatTimeRemaining(remaining);
+        } catch (e) {
+            console.error("Error getting Crown:", e);
+            document.getElementById('crown-address').textContent = "Erreur de chargement";
+        }
+        
+        try {
+            const biggestBuy = await contract.biggestBuy();
+            console.log("Biggest buy:", ethers.utils.formatEther(biggestBuy));
             updateValue('biggest-buy-value', parseFloat(ethers.utils.formatEther(biggestBuy)));
-            
-            updateCountdown(remaining);
-            console.log("✅ Infos CROWN récupérées");
-
-            return {
-                crown,
-                biggestBuy: ethers.utils.formatEther(biggestBuy),
-                timeRemaining: remaining,
-                lastCrownChange: lastCrownChange.toNumber(),
-                resetPeriod: resetPeriod.toNumber()
-            };
-        });
+            updateValue('crown-buy-amount', parseFloat(ethers.utils.formatEther(biggestBuy)));
+        } catch (e) {
+            console.error("Error getting biggest buy:", e);
+        }
+        
+        // Initialize chart
+        initPriceChart();
+        
+        console.log("✅ Initialisation des données terminée");
     } catch (e) {
-        console.error("❌ Erreur de récupération des infos CROWN:", e);
-        document.getElementById('crown-address').textContent = "Erreur de chargement";
-        document.getElementById('crown-time-remaining').textContent = "--";
-        document.getElementById('biggest-buy-value').textContent = "--";
-        document.getElementById('crown-buy-amount').textContent = "--";
-        return null;
-    }
-}
-
-// Get Crown rewards with improved error handling
-async function getCrownRewards() {
-    try {
-        return await fetchWithRetry(async () => {
-            console.log("💰 Récupération des récompenses CROWN...");
-            
-            // Récupérer par blocs de 10000 pour éviter les timeout
-            const fromBlock = 6703915; // Block de départ
-            const latestBlock = await provider.getBlockNumber();
-            let totalRewards = ethers.BigNumber.from(0);
-            
-            // Parcourir les blocs par tranches pour éviter les timeouts
-            const batchSize = 100000; // Taille des lots
-            for (let startBlock = fromBlock; startBlock <= latestBlock; startBlock += batchSize) {
-                const endBlock = Math.min(startBlock + batchSize - 1, latestBlock);
-                console.log(`📊 Analyse des blocs ${startBlock} à ${endBlock}...`);
-                
-                try {
-                    const filter = contract.filters.CrownPayout();
-                    const logs = await contract.queryFilter(filter, startBlock, endBlock);
-                    
-                    for (const event of logs) {
-                        totalRewards = totalRewards.add(event.args.amountETH);
-                    }
-                    
-                    console.log(`✅ ${logs.length} événements trouvés dans ce lot`);
-                } catch (batchError) {
-                    console.warn(`⚠️ Erreur de lot, poursuite avec le lot suivant:`, batchError);
-                }
-            }
-            
-            const formattedRewards = ethers.utils.formatEther(totalRewards);
-            updateValue('crown-rewards', parseFloat(formattedRewards));
-            console.log(`✅ Total des récompenses: ${formattedRewards} ETH`);
-            
-            return formattedRewards;
+        console.error("❌ Erreur d'initialisation:", e);
+        document.querySelectorAll('.loader').forEach(loader => {
+            loader.parentNode.textContent = "Erreur de chargement";
         });
-    } catch (error) {
-        console.error("❌ Erreur de récupération des récompenses:", error);
-        document.getElementById('crown-rewards').textContent = "0.0000";
-        return "0.0000";
-    }
-}
-
-// Get ETH price in USD
-async function getEthPriceInUSD() {
-    try {
-        return await fetchWithRetry(async () => {
-            console.log("💲 Récupération du prix ETH...");
-            const res = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd");
-            const json = await res.json();
-            console.log(`✅ Prix ETH: ${json.ethereum.usd} USD`);
-            return json.ethereum.usd;
-        });
-    } catch (e) {
-        console.warn("⚠️ Utilisation du prix ETH par défaut");
-        return 3000; // Default fallback price
-    }
-}
-
-// Get token price avec gestion d'erreur améliorée
-async function getTokenPrice() {
-    try {
-        return await fetchWithRetry(async () => {
-            console.log("💲 Récupération du prix $CROWN...");
-            const [r0, r1] = await pairContract.getReserves();
-            const token0 = await pairContract.token0();
-            const ethPrice = await getEthPriceInUSD();
-
-            const [tokenRes, ethRes] = token0.toLowerCase() === CONTRACT_ADDRESS.toLowerCase() 
-                ? [r0, r1] 
-                : [r1, r0];
-
-            const priceETH = ethRes / tokenRes;
-            const priceUSD = priceETH * ethPrice;
-
-            updateValue('price-value', priceUSD);
-            console.log(`✅ Prix $CROWN: ${priceUSD} USD (${priceETH} ETH)`);
-            
-            return { priceETH, priceUSD };
-        });
-    } catch (e) {
-        console.error("❌ Erreur de récupération du prix:", e);
-        document.getElementById('price-value').textContent = "--";
-        return { priceETH: 0, priceUSD: 0 };
-    }
-}
-
-// Get market cap
-async function getMarketCap(priceUSD) {
-    try {
-        return await fetchWithRetry(async () => {
-            console.log("📊 Calcul de la capitalisation de marché...");
-            const supply = await contract.totalSupply();
-            const decimals = await contract.decimals();
-            const formattedSupply = ethers.utils.formatUnits(supply, decimals);
-            const mcap = parseFloat(formattedSupply) * priceUSD;
-            
-            updateValue('mcap-value', mcap);
-            console.log(`✅ Market Cap: ${mcap} USD`);
-            
-            return mcap;
-        });
-    } catch (e) {
-        console.error("❌ Erreur de calcul de la capitalisation:", e);
-        document.getElementById('mcap-value').textContent = "--";
-        return 0;
-    }
-}
-
-// Get liquidity
-async function getLiquidity() {
-    try {
-        return await fetchWithRetry(async () => {
-            console.log("💧 Récupération de la liquidité...");
-            const [r0, r1] = await pairContract.getReserves();
-            const token0 = await pairContract.token0();
-            const ethPrice = await getEthPriceInUSD();
-
-            const ethReserve = token0.toLowerCase() === CONTRACT_ADDRESS.toLowerCase() ? r1 : r0;
-            const ethValue = ethers.utils.formatEther(ethReserve);
-            const liquidityUSD = parseFloat(ethValue) * ethPrice * 2; // Multiply by 2 for both sides of liquidity
-            
-            updateValue('liquidity-value', liquidityUSD);
-            console.log(`✅ Liquidité: ${liquidityUSD} USD`);
-            
-            return liquidityUSD;
-        });
-    } catch (e) {
-        console.error("❌ Erreur de récupération de la liquidité:", e);
-        document.getElementById('liquidity-value').textContent = "--";
-        return 0;
     }
 }
 
@@ -351,7 +217,7 @@ function initPriceChart() {
         console.log("📈 Initialisation du graphique...");
         const ctx = document.getElementById('price-chart').getContext('2d');
         
-        // Generate some sample data for now
+        // Generate sample data
         const labels = [];
         const data = [];
         const now = new Date();
@@ -361,7 +227,7 @@ function initPriceChart() {
             date.setDate(date.getDate() - i);
             labels.push(date.toLocaleDateString('fr-FR', { month: 'short', day: 'numeric' }));
             
-            // Random price trend with some volatility but general uptrend
+            // Random price trend with volatility and uptrend
             const baseValue = 0.0001;
             const volatility = 0.00005;
             const uptrend = 0.000003 * (30 - i);
@@ -422,7 +288,7 @@ function initPriceChart() {
                         ticks: {
                             color: '#aaaaaa',
                             callback: function(value) {
-                                return ' + value.toFixed(8);
+                                return '$' + value.toFixed(8);
                             }
                         }
                     }
@@ -434,79 +300,6 @@ function initPriceChart() {
     } catch (e) {
         console.error("❌ Erreur d'initialisation du graphique:", e);
         return false;
-    }
-}
-
-// Initialize data
-async function initData() {
-    try {
-        console.log("🚀 Initialisation des données $CROWN...");
-        
-        // Initialiser les connexions au contrat
-        const contractsInitialized = await initContracts();
-        if (!contractsInitialized) {
-            throw new Error("Échec de l'initialisation des contrats");
-        }
-        
-        // Get all data in parallel
-        const crownInfo = await getCrownInfo();
-        
-        // Obtenir le prix et la capitalisation
-        const price = await getTokenPrice();
-        if (price && price.priceUSD > 0) {
-            await getMarketCap(price.priceUSD);
-        }
-        
-        // Obtenir la liquidité et les récompenses
-        await Promise.all([
-            getLiquidity(),
-            getCrownRewards()
-        ]);
-        
-        // Initialize chart after data is loaded
-        initPriceChart();
-        
-        console.log("✅ Initialisation des données terminée");
-        
-        // Schedule regular updates
-        setInterval(async () => {
-            try {
-                console.log("🔄 Mise à jour des données...");
-                const [updatedCrownInfo, updatedPrice] = await Promise.all([
-                    getCrownInfo(),
-                    getTokenPrice()
-                ]);
-                
-                if (updatedPrice && updatedPrice.priceUSD > 0) {
-                    await getMarketCap(updatedPrice.priceUSD);
-                }
-                
-                await Promise.all([
-                    getLiquidity(),
-                    getCrownRewards()
-                ]);
-                
-                console.log("✅ Données mises à jour");
-            } catch (e) {
-                console.error("❌ Erreur de mise à jour des données:", e);
-            }
-        }, 60000); // Mise à jour toutes les minutes
-        
-        // Update countdown every second
-        setInterval(() => {
-            if (crownInfo) {
-                const now = Math.floor(Date.now() / 1000);
-                const resetTime = crownInfo.lastCrownChange + crownInfo.resetPeriod;
-                const remaining = resetTime > now ? resetTime - now : 0;
-                updateCountdown(remaining);
-            }
-        }, 1000);
-        
-    } catch (e) {
-        console.error("❌ Erreur d'initialisation:", e);
-        document.querySelectorAll('.loader').forEach(loader => {
-            loader.parentNode.textContent = "Erreur de chargement";
-        });
     }
 }
 
